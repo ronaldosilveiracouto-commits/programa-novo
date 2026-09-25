@@ -6,6 +6,13 @@ uma pessoa estivesse apertando no teclado.
 - **Funciona por trás de outro programa**: escolha a janela de destino e as teclas
   vão direto para ela, mesmo em segundo plano ou minimizada, enquanto você usa o PC.
   - Escolha pela lista de janelas, ou aponte o mouse para a janela/campo e aperte **F7**.
+  - **Método** de envio (se um não funcionar no seu programa, teste o próximo):
+    1. *Mensagem direta* – não mexe em nada na tela.
+    2. *Mensagem direta síncrona* – mesma ideia, entregue na hora.
+    3. *Mensagem + fingir janela ativa* – para programas que ignoram teclas quando não estão ativos.
+    4. *Trazer p/ frente por instantes e voltar* – o programa aparece por ~0,1 s,
+       recebe a tecla como teclado real, e a janela que você usava volta para frente.
+       Funciona com jogos que leem o teclado direto (ex.: Lineage 2).
 - Opção "janela em foco": usa `SendInput` com *scan codes* de hardware (mesmo caminho de um teclado físico).
 - Cada tecla é pressionada e solta com um tempo de "segurar" aleatório (40–90 ms).
 - **Delay individual por tecla**: cada tecla (F1..F5) tem o seu próprio intervalo

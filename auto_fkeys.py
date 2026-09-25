@@ -33,6 +33,9 @@ VK_F6 = 0x75
 VK_F7 = 0x76
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
+WM_ACTIVATE = 0x0006
+WM_SETFOCUS = 0x0007
+WA_ACTIVE = 1
 
 # Scan codes (set 1) das teclas F1..F5
 SCAN_CODES = {"F1": 0x3B, "F2": 0x3C, "F3": 0x3D, "F4": 0x3E, "F5": 0x3F}
@@ -86,6 +89,19 @@ user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 user32.PostMessageW.restype = wintypes.BOOL
+user32.SendMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+user32.SendMessageW.restype = ctypes.c_ssize_t
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+user32.SetForegroundWindow.restype = wintypes.BOOL
+user32.BringWindowToTop.argtypes = (wintypes.HWND,)
+user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+user32.IsIconic.argtypes = (wintypes.HWND,)
+user32.IsIconic.restype = wintypes.BOOL
+user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+user32.AttachThreadInput.argtypes = (wintypes.DWORD, wintypes.DWORD, wintypes.BOOL)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32.IsWindow.argtypes = (wintypes.HWND,)
 user32.IsWindow.restype = wintypes.BOOL
 user32.IsWindowVisible.argtypes = (wintypes.HWND,)
@@ -138,33 +154,88 @@ def _send_scan(scan, key_up):
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _post_key(hwnd, name, key_up):
-    scan = SCAN_CODES[name]
+def _key_lparam(name, key_up):
     # lParam igual ao gerado pelo teclado: repeticao=1, scan code, e no
     # KEYUP os bits "estado anterior" (30) e "transicao" (31) ligados.
-    lparam = 1 | (scan << 16)
+    lparam = 1 | (SCAN_CODES[name] << 16)
     if key_up:
         lparam |= (1 << 30) | (1 << 31)
+    return lparam
+
+
+def _post_key(hwnd, name, key_up):
     msg = WM_KEYUP if key_up else WM_KEYDOWN
-    if not user32.PostMessageW(hwnd, msg, VK_CODES[name], lparam):
+    if not user32.PostMessageW(hwnd, msg, VK_CODES[name], _key_lparam(name, key_up)):
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def press_key(name, hwnd=None, hold_min=0.04, hold_max=0.09):
+def _send_msg_key(hwnd, name, key_up):
+    msg = WM_KEYUP if key_up else WM_KEYDOWN
+    user32.SendMessageW(hwnd, msg, VK_CODES[name], _key_lparam(name, key_up))
+
+
+def _force_foreground(hwnd):
+    """Traz a janela para frente mesmo quando outro programa esta em foco."""
+    fg = user32.GetForegroundWindow()
+    if fg == hwnd:
+        return
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    cur = kernel32.GetCurrentThreadId()
+    fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    attached = bool(fg_thread and fg_thread != cur and user32.AttachThreadInput(cur, fg_thread, True))
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(cur, fg_thread, False)
+
+
+def _hold():
+    return random.uniform(0.04, 0.09)
+
+
+# Metodos de envio para a janela escolhida
+METHODS = {
+    "PostMessage": "Mensagem direta (padrao)",
+    "SendMessage": "Mensagem direta sincrona",
+    "Activate": "Mensagem + fingir janela ativa",
+    "Flash": "Trazer p/ frente por instantes e voltar",
+}
+
+
+def press_key(name, hwnd=None, method="PostMessage"):
     """Pressiona e solta a tecla, segurando por um tempo aleatorio como uma pessoa.
 
-    Sem hwnd vai para a janela em foco; com hwnd vai direto para aquela
-    janela, mesmo que ela esteja em segundo plano.
+    Sem hwnd vai para a janela em foco; com hwnd vai para aquela janela
+    usando o metodo escolhido.
     """
-    if hwnd:
-        _post_key(hwnd, name, key_up=False)
-        time.sleep(random.uniform(hold_min, hold_max))
-        _post_key(hwnd, name, key_up=True)
-    else:
-        scan = SCAN_CODES[name]
+    scan = SCAN_CODES[name]
+    if not hwnd:
         _send_scan(scan, key_up=False)
-        time.sleep(random.uniform(hold_min, hold_max))
+        time.sleep(_hold())
         _send_scan(scan, key_up=True)
+    elif method == "Flash":
+        # Janela vai para frente, recebe a tecla como teclado real e o
+        # programa que estava em uso volta para frente.
+        previous = user32.GetForegroundWindow()
+        _force_foreground(hwnd)
+        time.sleep(0.05)
+        _send_scan(scan, key_up=False)
+        time.sleep(_hold())
+        _send_scan(scan, key_up=True)
+        time.sleep(0.03)
+        if previous and previous != hwnd and user32.IsWindow(previous):
+            _force_foreground(previous)
+    else:
+        send = _send_msg_key if method == "SendMessage" else _post_key
+        if method == "Activate":
+            user32.SendMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0)
+            user32.SendMessageW(hwnd, WM_SETFOCUS, 0, 0)
+        send(hwnd, name, key_up=False)
+        time.sleep(_hold())
+        send(hwnd, name, key_up=True)
 
 
 class App:
@@ -195,9 +266,19 @@ class App:
         ttk.Button(dest, text="Atualizar", command=self.refresh_windows).grid(row=1, column=1)
         ttk.Label(dest, text="Dica: F7 captura a janela/campo que estiver sob o mouse.",
                   foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", padx=(20, 0))
+        method_frm = ttk.Frame(dest)
+        method_frm.grid(row=3, column=0, columnspan=2, sticky="w", padx=(20, 0), pady=(4, 0))
+        ttk.Label(method_frm, text="Metodo:").grid(row=0, column=0, sticky="w")
+        self.method_labels = list(METHODS.values())
+        self.method_combo = ttk.Combobox(method_frm, state="readonly", width=36,
+                                         values=self.method_labels)
+        self.method_combo.current(0)
+        self.method_combo.grid(row=0, column=1, padx=(4, 0))
+        ttk.Label(dest, text="Se o jogo nao reagir, teste os outros metodos.",
+                  foreground="gray").grid(row=4, column=0, columnspan=2, sticky="w", padx=(20, 0))
         ttk.Radiobutton(dest, text="Janela em foco (teclado simulado)",
                         variable=self.target_mode, value="foco").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+            row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         ttk.Label(frm, text="Tecla").grid(row=1, column=0, sticky="w")
         ttk.Label(frm, text="Delay (s)").grid(row=1, column=1, sticky="w")
@@ -283,6 +364,7 @@ class App:
             messagebox.showwarning("Auto F-Keys", "Selecione pelo menos uma tecla.")
             return
         target = None
+        method = list(METHODS)[max(0, self.method_combo.current())]
         if self.target_mode.get() == "janela":
             target = self.target_hwnd
             if not target or not user32.IsWindow(target):
@@ -295,7 +377,7 @@ class App:
         self.stop_event.clear()
         self.btn.config(text="Parar (F6)")
         self.worker = threading.Thread(
-            target=self._run, args=(delays, jitter, delay, target), daemon=True)
+            target=self._run, args=(delays, jitter, delay, target, method), daemon=True)
         self.worker.start()
 
     def stop(self):
@@ -312,7 +394,7 @@ class App:
         self.root.after(0, self.status.set, text)
 
     # --- threads --------------------------------------------------------
-    def _run(self, delays, jitter, delay, target):
+    def _run(self, delays, jitter, delay, target, method):
         end = time.monotonic() + delay
         while not self.stop_event.is_set() and time.monotonic() < end:
             hint = "" if target else " foque a janela de destino."
@@ -336,7 +418,7 @@ class App:
                 self.root.after(0, self.stop)
                 return
             try:
-                press_key(key, target)
+                press_key(key, target, method)
             except OSError as e:
                 self._set_status(f"Erro ao enviar tecla: {e}")
                 self.root.after(0, self.stop)
