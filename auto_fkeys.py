@@ -5,7 +5,8 @@ As teclas sao enviadas via SendInput com scan codes de hardware, o mesmo
 caminho usado por um teclado fisico, entao a janela ativa recebe o
 pressionar e o soltar da tecla como se alguem estivesse digitando.
 
-Atalho global: F9 inicia/para.
+Cada tecla tem o seu proprio intervalo (delay).
+Atalho global: F6 ativa/desativa.
 """
 
 import ctypes
@@ -25,7 +26,7 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
-VK_F9 = 0x78
+VK_F6 = 0x75
 
 # Scan codes (set 1) das teclas F1..F5
 SCAN_CODES = {"F1": 0x3B, "F2": 0x3C, "F3": 0x3D, "F4": 0x3E, "F5": 0x3F}
@@ -106,43 +107,35 @@ class App:
         frm = ttk.Frame(root, padding=12)
         frm.grid()
 
-        ttk.Label(frm, text="Teclas:").grid(row=0, column=0, sticky="w")
-        keys_frm = ttk.Frame(frm)
-        keys_frm.grid(row=0, column=1, columnspan=2, sticky="w")
+        ttk.Label(frm, text="Tecla").grid(row=0, column=0, sticky="w")
+        ttk.Label(frm, text="Delay (s)").grid(row=0, column=1, sticky="w")
         self.key_vars = {}
-        for i, name in enumerate(SCAN_CODES):
+        self.key_delays = {}
+        for i, name in enumerate(SCAN_CODES, start=1):
             var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(keys_frm, text=name, variable=var).grid(row=0, column=i, padx=2)
+            ttk.Checkbutton(frm, text=name, variable=var).grid(row=i, column=0, sticky="w")
+            delay = tk.DoubleVar(value=float(i))
+            ttk.Spinbox(frm, from_=0.05, to=3600, increment=0.5, width=8,
+                        textvariable=delay).grid(row=i, column=1, sticky="w", pady=1)
             self.key_vars[name] = var
+            self.key_delays[name] = delay
 
-        ttk.Label(frm, text="Modo:").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.mode = tk.StringVar(value="sequencia")
-        ttk.Radiobutton(frm, text="Sequencia (F1, F2, ...)", variable=self.mode,
-                        value="sequencia").grid(row=1, column=1, sticky="w", pady=(8, 0))
-        ttk.Radiobutton(frm, text="Aleatorio", variable=self.mode,
-                        value="aleatorio").grid(row=1, column=2, sticky="w", pady=(8, 0))
-
-        ttk.Label(frm, text="Intervalo entre teclas (s):").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.interval = tk.DoubleVar(value=1.0)
-        ttk.Spinbox(frm, from_=0.05, to=3600, increment=0.1, width=8,
-                    textvariable=self.interval).grid(row=2, column=1, sticky="w", pady=(8, 0))
-
-        ttk.Label(frm, text="Variacao aleatoria (+/- s):").grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(frm, text="Variacao aleatoria (+/- s):").grid(row=6, column=0, sticky="w", pady=(4, 0))
         self.jitter = tk.DoubleVar(value=0.2)
         ttk.Spinbox(frm, from_=0, to=600, increment=0.05, width=8,
-                    textvariable=self.jitter).grid(row=3, column=1, sticky="w", pady=(4, 0))
+                    textvariable=self.jitter).grid(row=6, column=1, sticky="w", pady=(4, 0))
 
-        ttk.Label(frm, text="Espera antes de comecar (s):").grid(row=4, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(frm, text="Espera antes de comecar (s):").grid(row=7, column=0, sticky="w", pady=(4, 0))
         self.delay = tk.DoubleVar(value=3.0)
         ttk.Spinbox(frm, from_=0, to=60, increment=1, width=8,
-                    textvariable=self.delay).grid(row=4, column=1, sticky="w", pady=(4, 0))
+                    textvariable=self.delay).grid(row=7, column=1, sticky="w", pady=(4, 0))
 
-        self.btn = ttk.Button(frm, text="Iniciar (F9)", command=self.toggle)
-        self.btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(12, 4))
+        self.btn = ttk.Button(frm, text="Iniciar (F6)", command=self.toggle)
+        self.btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(12, 4))
 
         self.status = tk.StringVar(value="Parado. Clique na janela de destino apos iniciar.")
         ttk.Label(frm, textvariable=self.status, foreground="gray").grid(
-            row=6, column=0, columnspan=3, sticky="w")
+            row=9, column=0, columnspan=2, sticky="w")
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         threading.Thread(target=self._hotkey_loop, daemon=True).start()
@@ -155,29 +148,29 @@ class App:
             self.start()
 
     def start(self):
-        keys = [k for k, v in self.key_vars.items() if v.get()]
-        if not keys:
-            messagebox.showwarning("Auto F-Keys", "Selecione pelo menos uma tecla.")
-            return
         try:
-            interval = max(0.05, float(self.interval.get()))
+            delays = {k: max(0.05, float(self.key_delays[k].get()))
+                      for k, v in self.key_vars.items() if v.get()}
             jitter = max(0.0, float(self.jitter.get()))
             delay = max(0.0, float(self.delay.get()))
         except (tk.TclError, ValueError):
             messagebox.showerror("Auto F-Keys", "Valores numericos invalidos.")
             return
+        if not delays:
+            messagebox.showwarning("Auto F-Keys", "Selecione pelo menos uma tecla.")
+            return
 
         self.running = True
         self.stop_event.clear()
-        self.btn.config(text="Parar (F9)")
+        self.btn.config(text="Parar (F6)")
         self.worker = threading.Thread(
-            target=self._run, args=(keys, self.mode.get(), interval, jitter, delay), daemon=True)
+            target=self._run, args=(delays, jitter, delay), daemon=True)
         self.worker.start()
 
     def stop(self):
         self.running = False
         self.stop_event.set()
-        self.btn.config(text="Iniciar (F9)")
+        self.btn.config(text="Iniciar (F6)")
         self._set_status("Parado.")
 
     def on_close(self):
@@ -188,20 +181,24 @@ class App:
         self.root.after(0, self.status.set, text)
 
     # --- threads --------------------------------------------------------
-    def _run(self, keys, mode, interval, jitter, delay):
+    def _run(self, delays, jitter, delay):
         end = time.monotonic() + delay
         while not self.stop_event.is_set() and time.monotonic() < end:
             self._set_status(f"Comecando em {end - time.monotonic():.0f}s... foque a janela de destino.")
             self.stop_event.wait(0.25)
 
+        def next_wait(key):
+            return max(0.02, delays[key] + random.uniform(-jitter, jitter))
+
+        # Cada tecla tem o seu proprio relogio; todas comecam juntas, em ordem.
+        now = time.monotonic()
+        due = {key: now + i * 0.15 for i, key in enumerate(delays)}
         count = 0
-        idx = 0
         while not self.stop_event.is_set():
-            if mode == "aleatorio":
-                key = random.choice(keys)
-            else:
-                key = keys[idx % len(keys)]
-                idx += 1
+            key = min(due, key=due.get)
+            wait = due[key] - time.monotonic()
+            if wait > 0 and self.stop_event.wait(wait):
+                break
             try:
                 press_key(key)
             except OSError as e:
@@ -210,14 +207,18 @@ class App:
                 return
             count += 1
             self._set_status(f"Rodando - ultima tecla: {key} (total {count})")
-            wait = max(0.02, interval + random.uniform(-jitter, jitter))
-            self.stop_event.wait(wait)
+            now = time.monotonic()
+            due[key] = now + next_wait(key)
+            # Folga minima para duas teclas nunca sairem grudadas.
+            for other in due:
+                if other != key and due[other] < now + 0.1:
+                    due[other] = now + 0.1
 
     def _hotkey_loop(self):
-        """Verifica F9 global para iniciar/parar mesmo com outra janela em foco."""
+        """Verifica F6 global para iniciar/parar mesmo com outra janela em foco."""
         was_down = False
         while True:
-            down = bool(user32.GetAsyncKeyState(VK_F9) & 0x8000)
+            down = bool(user32.GetAsyncKeyState(VK_F6) & 0x8000)
             if down and not was_down:
                 self.root.after(0, self.toggle)
             was_down = down

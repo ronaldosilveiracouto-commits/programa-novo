@@ -5,10 +5,10 @@ uma pessoa estivesse apertando no teclado.
 
 - Usa `SendInput` com *scan codes* de hardware (mesmo caminho de um teclado físico).
 - Cada tecla é pressionada e solta com um tempo de "segurar" aleatório (40–90 ms).
-- Intervalo configurável com variação aleatória, para não ficar robótico.
-- Modo **sequência** (F1 → F2 → … → F5) ou **aleatório**.
-- Escolha quais teclas usar (F1..F5).
-- **F9** inicia/para de qualquer lugar, mesmo com outra janela em foco.
+- **Delay individual por tecla**: cada tecla (F1..F5) tem o seu próprio intervalo
+  (ex.: F1 a cada 2 s, F3 a cada 10 s) e pode ser ligada/desligada.
+- Variação aleatória no intervalo, para não ficar robótico.
+- **F6** ativa/desativa de qualquer lugar, mesmo com outra janela em foco.
 - Contagem regressiva antes de começar, para dar tempo de clicar na janela de destino.
 
 ## Como usar
